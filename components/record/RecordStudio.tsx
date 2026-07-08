@@ -48,8 +48,10 @@ export function RecordStudio() {
       const result = await rec.stop();
       setTake(result);
       setPhase("done");
-    } catch {
-      setError("Something went wrong while rendering the MP3.");
+    } catch (err) {
+      console.error("[recorder] render failed:", err);
+      const msg = err instanceof Error ? err.message : "Please try again.";
+      setError(`Couldn't finish the recording. ${msg}`);
       setPhase("idle");
     } finally {
       recorderRef.current = null;

@@ -1,3 +1,5 @@
+import { Mp3Encoder } from "@breezystack/lamejs";
+
 /**
  * Karaoke performance recorder.
  *
@@ -132,15 +134,20 @@ export class KaraokeRecorder {
     } catch {
       /* already stopped */
     }
-    this.trackSource?.disconnect();
-    this.nodes.forEach((n) => {
+    [this.trackSource, ...this.nodes].forEach((n) => {
       try {
-        n.disconnect();
+        n?.disconnect();
       } catch {
         /* ignore */
       }
     });
     this.mic?.getTracks().forEach((t) => t.stop());
+
+    if (this.length === 0) {
+      throw new Error(
+        "No audio was captured — check that your microphone is connected and allowed."
+      );
+    }
 
     const pcm = new Float32Array(this.length);
     let off = 0;
@@ -155,8 +162,6 @@ export class KaraokeRecorder {
 }
 
 async function encodeMp3(pcm: Float32Array, sampleRate: number): Promise<Blob> {
-  // Lazy-load the encoder so it isn't in the editor's initial bundle.
-  const { Mp3Encoder } = await import("@breezystack/lamejs");
   const enc = new Mp3Encoder(1, sampleRate, 128);
   const int16 = new Int16Array(pcm.length);
   for (let i = 0; i < pcm.length; i += 1) {
