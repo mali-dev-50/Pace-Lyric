@@ -15,7 +15,7 @@ import type { Line } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { PaceGuide } from "./PaceGuide";
 
-export function KaraokePreview() {
+export function KaraokePreview({ idleMessage }: { idleMessage?: string } = {}) {
   const lines = useStore((s) => s.project?.lines ?? []);
   const t = useStore((s) => s.currentTime);
   const title = useStore((s) => s.project?.title ?? "");
@@ -66,7 +66,7 @@ export function KaraokePreview() {
         ) : showCountdown ? (
           <Countdown seconds={leadIn!} line={nextLine} />
         ) : (
-          <IdleState hasLines={lines.length > 0} />
+          <IdleState hasLines={lines.length > 0} message={idleMessage} />
         )}
 
         {/* next line preview */}
@@ -170,12 +170,13 @@ function Countdown({ seconds, line }: { seconds: number; line: Line | null }) {
   );
 }
 
-function IdleState({ hasLines }: { hasLines: boolean }) {
+function IdleState({ hasLines, message }: { hasLines: boolean; message?: string }) {
   return (
     <p className="text-center text-lg text-[var(--color-ink-subtle)]">
-      {hasLines
-        ? "Press play to preview your synced karaoke."
-        : "Add lyrics and timing to preview the karaoke here."}
+      {message ??
+        (hasLines
+          ? "Press play to preview your synced karaoke."
+          : "Add lyrics and timing to preview the karaoke here.")}
     </p>
   );
 }
