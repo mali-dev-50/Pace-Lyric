@@ -109,7 +109,7 @@ export function Header() {
 
       {/* center: view toggle */}
       <div className="mx-auto flex items-center gap-1 rounded-[var(--radius-sm)] border border-[var(--color-line)] bg-[var(--color-bg)] p-0.5">
-        {(["editor", "preview"] as const).map((v) => (
+        {(["editor", "preview", "record"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}

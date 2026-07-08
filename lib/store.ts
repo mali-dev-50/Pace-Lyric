@@ -19,7 +19,7 @@ import { clamp } from "./time";
 import type { Flag, KaraokeProject, Line, ProjectSettings, TimingLevel, Word } from "./types";
 import { extractPeaks } from "./waveform";
 
-type View = "editor" | "preview";
+type View = "editor" | "preview" | "record";
 
 interface StoreState {
   project: KaraokeProject | null;

@@ -10,6 +10,7 @@ import { SyncBar } from "./editor/SyncBar";
 import { LyricsPanel } from "./editor/LyricsPanel";
 import { Inspector } from "./editor/Inspector";
 import { KaraokePreview } from "./preview/KaraokePreview";
+import { RecordStudio } from "./record/RecordStudio";
 
 export function Workspace() {
   const view = useStore((s) => s.view);
@@ -20,13 +21,15 @@ export function Workspace() {
       <Header />
 
       <main className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-        {/* Audio transport + waveform */}
-        <section className="shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
-          <div className="mb-3">
-            <Waveform />
-          </div>
-          <TransportBar />
-        </section>
+        {/* Audio transport + waveform (the recorder manages its own audio) */}
+        {view !== "record" && (
+          <section className="shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
+            <div className="mb-3">
+              <Waveform />
+            </div>
+            <TransportBar />
+          </section>
+        )}
 
         {view === "editor" ? (
           <>
@@ -43,8 +46,10 @@ export function Workspace() {
               </div>
             </div>
           </>
-        ) : (
+        ) : view === "preview" ? (
           <KaraokePreview />
+        ) : (
+          <RecordStudio />
         )}
       </main>
     </div>
