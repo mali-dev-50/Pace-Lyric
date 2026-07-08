@@ -15,12 +15,18 @@ import {
   Trash2,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
-import { KaraokeRecorder, prepareTrack, type Take } from "@/lib/recorder";
+import {
+  KaraokeRecorder,
+  StemPlayer,
+  prepareTrack,
+  renderMixToMp3,
+  type VoiceStem,
+} from "@/lib/recorder";
 import { clamp, formatTimecode } from "@/lib/time";
 import { Button } from "../ui/Button";
 import { KaraokePreview } from "../preview/KaraokePreview";
 
-type Phase = "idle" | "preparing" | "recording" | "encoding" | "done";
+type Phase = "idle" | "preparing" | "recording" | "done";
 
 export function RecordStudio() {
   const audioUrl = useStore((s) => s.audioUrl);
@@ -31,12 +37,20 @@ export function RecordStudio() {
   const updateSettings = useStore((s) => s.updateSettings);
 
   const recorderRef = useRef<KaraokeRecorder | null>(null);
+  const stemRef = useRef<StemPlayer | null>(null);
+  const trackBufferRef = useRef<AudioBuffer | null>(null);
+
   const [phase, setPhase] = useState<Phase>("idle");
   const [elapsed, setElapsed] = useState(0);
-  const [take, setTake] = useState<Take | null>(null);
+  const [take, setTake] = useState<VoiceStem | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rendering, setRendering] = useState(false);
 
-  // Mixer levels — seeded from the project, adjustable live, persisted (debounced).
+  // take playback
+  const [playing, setPlaying] = useState(false);
+  const [playhead, setPlayhead] = useState(0);
+
+  // mixer levels — persisted, adjustable live before/during/after a take
   const [micGain, setMicGainState] = useState(
     () => useStore.getState().project?.settings.micGain ?? 1
   );
@@ -48,7 +62,6 @@ export function RecordStudio() {
 
   const persistGains = useCallback(
     (patch: { micGain?: number; trackGain?: number }) => {
-      // Accumulate so debouncing across both faders doesn't drop a patch.
       pendingRef.current = { ...pendingRef.current, ...patch };
       if (persistRef.current) clearTimeout(persistRef.current);
       persistRef.current = setTimeout(() => {
@@ -61,62 +74,71 @@ export function RecordStudio() {
 
   const changeMic = (v: number) => {
     setMicGainState(v);
-    recorderRef.current?.setMicGain(v);
+    stemRef.current?.setVoiceGain(v);
     persistGains({ micGain: v });
   };
   const changeTrack = (v: number) => {
     setTrackGainState(v);
     recorderRef.current?.setTrackGain(v);
+    stemRef.current?.setTrackGain(v);
     persistGains({ trackGain: v });
   };
 
-  useEffect(() => {
-    return () => {
-      if (take) URL.revokeObjectURL(take.url);
-    };
-  }, [take]);
+  const teardownStem = useCallback(() => {
+    stemRef.current?.dispose();
+    stemRef.current = null;
+    setPlaying(false);
+    setPlayhead(0);
+  }, []);
 
-  const finish = useCallback(async () => {
+  useEffect(() => () => teardownStem(), [teardownStem]);
+
+  const finish = useCallback(() => {
     const rec = recorderRef.current;
     if (!rec || !rec.recording) return;
-    setPhase("encoding");
     try {
-      const result = await rec.stop();
-      setTake(result);
+      const stem = rec.stop();
+      const track = trackBufferRef.current;
+      if (!track) throw new Error("Backing track unavailable.");
+      const player = new StemPlayer(stem, track, micGain, trackGain);
+      player.onTick = (t) => {
+        setPlayhead(t);
+        setCurrentTime(t);
+      };
+      player.onEnded = () => setPlaying(false);
+      stemRef.current = player;
+      setTake(stem);
       setPhase("done");
+      setPlayhead(0);
+      setCurrentTime(0);
     } catch (err) {
-      console.error("[recorder] render failed:", err);
-      const msg = err instanceof Error ? err.message : "Please try again.";
-      setError(`Couldn't finish the recording. ${msg}`);
+      console.error("[recorder] stop failed:", err);
+      setError(`Couldn't finish the recording. ${err instanceof Error ? err.message : ""}`);
       setPhase("idle");
     } finally {
       recorderRef.current = null;
-      seek(0);
     }
-  }, [seek]);
+  }, [micGain, trackGain, setCurrentTime]);
 
   const startRecording = useCallback(async () => {
     if (!audioUrl) return;
     setError(null);
-    if (take) {
-      URL.revokeObjectURL(take.url);
-      setTake(null);
-    }
+    teardownStem();
+    setTake(null);
     setPhase("preparing");
     pause();
     try {
       const buffer = await prepareTrack(audioUrl);
+      trackBufferRef.current = buffer;
       const rec = new KaraokeRecorder();
       recorderRef.current = rec;
       await rec.start(buffer, {
-        startAt: 0,
-        micGain,
         trackGain,
         onTick: (t) => {
           setElapsed(t);
           setCurrentTime(t);
         },
-        onComplete: () => void finish(),
+        onComplete: () => finish(),
       });
       setPhase("recording");
     } catch (err) {
@@ -131,17 +153,50 @@ export function RecordStudio() {
       setPhase("idle");
       recorderRef.current = null;
     }
-  }, [audioUrl, take, pause, setCurrentTime, finish, micGain, trackGain]);
+  }, [audioUrl, pause, setCurrentTime, finish, trackGain, teardownStem]);
+
+  const togglePlay = () => {
+    const p = stemRef.current;
+    if (!p) return;
+    if (p.playing) {
+      p.pause();
+      setPlaying(false);
+    } else {
+      void p.play();
+      setPlaying(true);
+    }
+  };
+
+  const download = async () => {
+    if (!take || !trackBufferRef.current) return;
+    setRendering(true);
+    try {
+      const blob = await renderMixToMp3(take, trackBufferRef.current, micGain, trackGain);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${projectName.replace(/[^\w\-]+/g, "_")}_take.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("[recorder] render failed:", err);
+      setError("Couldn't render the MP3. Please try again.");
+    } finally {
+      setRendering(false);
+    }
+  };
 
   const discard = () => {
-    if (take) URL.revokeObjectURL(take.url);
+    teardownStem();
     setTake(null);
     setPhase("idle");
     setElapsed(0);
     seek(0);
   };
 
-  const downloadName = `${projectName.replace(/[^\w\-]+/g, "_")}_take.mp3`;
+  const dur = stemRef.current?.duration ?? take?.duration ?? 0;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -151,7 +206,9 @@ export function RecordStudio() {
           idleMessage={
             phase === "recording"
               ? "Sing along — your lyrics appear here in time."
-              : "Put on headphones, then record your take. Lyrics will guide you here."
+              : phase === "done"
+                ? "Play your take to review it, then rebalance and download."
+                : "Put on headphones, then record your take. Lyrics will guide you here."
           }
         />
       </div>
@@ -160,18 +217,27 @@ export function RecordStudio() {
       <section className="shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-line)] bg-[var(--color-surface)] px-4 py-4">
         <div className="mb-3 flex items-center justify-center gap-1.5 text-center text-xs text-[var(--color-ink-subtle)]">
           <Headphones className="h-3.5 w-3.5 shrink-0 text-[var(--color-accent)]" />
-          Use headphones — your mic is mixed with the track into a single MP3.
+          Use headphones — your mic is recorded separately and mixed with the track.
         </div>
 
-        {/* mixer — voice + music levels (live, saved with the project) */}
-        {(phase === "idle" || phase === "recording") && (
-          <div className="mb-4 flex flex-wrap items-center justify-center gap-x-8 gap-y-3 border-b border-[var(--color-line)] pb-4">
+        {/* mixer */}
+        {phase !== "preparing" && (
+          <div className="mb-2 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
             <Level icon={<Mic className="h-3.5 w-3.5" />} label="Your voice" value={micGain} onChange={changeMic} />
             <Level icon={<Music className="h-3.5 w-3.5" />} label="Music" value={trackGain} onChange={changeTrack} />
           </div>
         )}
+        {phase !== "preparing" && (
+          <p className="mb-4 text-center text-[11px] text-[var(--color-ink-subtle)]">
+            {phase === "done"
+              ? "Rebalance freely — playback and download update instantly."
+              : phase === "recording"
+                ? "“Music” is your monitor level; you can perfect the balance after the take."
+                : "Set a starting balance — you can adjust it after recording too."}
+          </p>
+        )}
 
-        <div className="flex min-h-[52px] items-center justify-center">
+        <div className="flex min-h-[52px] items-center justify-center border-t border-[var(--color-line)] pt-4">
           {phase === "idle" && (
             <Button variant="primary" size="lg" onClick={startRecording} disabled={!audioUrl}>
               <Mic className="h-5 w-5" /> Record take
@@ -196,17 +262,11 @@ export function RecordStudio() {
               <Button
                 variant="danger"
                 size="lg"
-                onClick={() => void finish()}
+                onClick={finish}
                 className="border-[var(--color-danger)] bg-[color-mix(in_srgb,var(--color-danger)_16%,transparent)] text-[var(--color-ink)]"
               >
                 <Square className="h-4 w-4 fill-[var(--color-danger)] text-[var(--color-danger)]" /> Stop
               </Button>
-            </div>
-          )}
-
-          {phase === "encoding" && (
-            <div className="flex items-center gap-2 text-sm text-[var(--color-ink-muted)]">
-              <Loader2 className="h-5 w-5 animate-spin text-[var(--color-accent)]" /> Rendering your MP3…
             </div>
           )}
 
@@ -217,13 +277,28 @@ export function RecordStudio() {
                 animate={{ opacity: 1, y: 0 }}
                 className="flex w-full max-w-3xl flex-wrap items-center justify-center gap-3"
               >
-                <TakePlayer url={take.url} />
+                <TakePlayer
+                  playing={playing}
+                  current={playhead}
+                  duration={dur}
+                  onToggle={togglePlay}
+                  onSeek={(t) => {
+                    stemRef.current?.seek(t);
+                    setPlayhead(t);
+                  }}
+                />
                 <div className="flex items-center gap-2">
-                  <a href={take.url} download={downloadName}>
-                    <Button variant="primary" size="md">
-                      <Download className="h-4 w-4" /> Download MP3
-                    </Button>
-                  </a>
+                  <Button variant="primary" size="md" onClick={download} disabled={rendering}>
+                    {rendering ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" /> Rendering…
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4" /> Download MP3
+                      </>
+                    )}
+                  </Button>
                   <Button variant="secondary" size="md" onClick={startRecording}>
                     <RotateCcw className="h-4 w-4" /> Re-record
                   </Button>
@@ -281,30 +356,28 @@ function Level({
   );
 }
 
-/** Compact, design-consistent player for the recorded take. */
-function TakePlayer({ url }: { url: string }) {
-  const ref = useRef<HTMLAudioElement | null>(null);
+/** Playback transport for the recorded take (driven by the StemPlayer). */
+function TakePlayer({
+  playing,
+  current,
+  duration,
+  onToggle,
+  onSeek,
+}: {
+  playing: boolean;
+  current: number;
+  duration: number;
+  onToggle: () => void;
+  onSeek: (t: number) => void;
+}) {
   const barRef = useRef<HTMLDivElement | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [cur, setCur] = useState(0);
-  const [dur, setDur] = useState(0);
-
-  const toggle = () => {
-    const el = ref.current;
-    if (!el) return;
-    if (el.paused) void el.play();
-    else el.pause();
-  };
-
   const seekTo = (clientX: number) => {
-    const el = ref.current;
     const bar = barRef.current;
-    if (!el || !bar || !dur) return;
+    if (!bar || !duration) return;
     const rect = bar.getBoundingClientRect();
-    el.currentTime = clamp((clientX - rect.left) / rect.width, 0, 1) * dur;
+    onSeek(clamp((clientX - rect.left) / rect.width, 0, 1) * duration);
   };
-
-  const pct = dur ? (cur / dur) * 100 : 0;
+  const pct = duration ? (current / duration) * 100 : 0;
 
   return (
     <div className="flex min-w-[260px] flex-1 items-center gap-3 rounded-[var(--radius-md)] border border-[var(--color-line)] bg-[var(--color-bg)] px-3 py-2">
@@ -312,7 +385,7 @@ function TakePlayer({ url }: { url: string }) {
         Take ready
       </span>
       <button
-        onClick={toggle}
+        onClick={onToggle}
         aria-label={playing ? "Pause take" : "Play take"}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[var(--color-accent-ink)] transition-colors hover:bg-[var(--color-accent-strong)]"
       >
@@ -334,21 +407,8 @@ function TakePlayer({ url }: { url: string }) {
         />
       </div>
       <span className="shrink-0 font-mono text-xs tabular-nums text-[var(--color-ink-muted)]">
-        {formatTimecode(cur)} / {formatTimecode(dur)}
+        {formatTimecode(current)} / {formatTimecode(duration)}
       </span>
-      <audio
-        ref={ref}
-        src={url}
-        className="hidden"
-        onLoadedMetadata={(e) => {
-          const d = e.currentTarget.duration;
-          setDur(Number.isFinite(d) ? d : 0);
-        }}
-        onTimeUpdate={(e) => setCur(e.currentTarget.currentTime)}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => setPlaying(false)}
-      />
     </div>
   );
 }

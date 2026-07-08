@@ -1,15 +1,16 @@
 import { Mp3Encoder } from "@breezystack/lamejs";
 
 /**
- * Karaoke performance recorder.
+ * Karaoke performance recorder — stem-based.
  *
- * Plays the decoded backing track through a Web Audio graph alongside the
- * live microphone, captures the MIX as mono PCM, and encodes it to MP3 in the
- * browser. The visible <audio> player is never rerouted — we play a decoded
- * AudioBuffer instead — so normal playback elsewhere stays untouched.
+ * During a take we record ONLY the microphone (a clean "voice stem") while the
+ * decoded backing track plays for monitoring. Voice and music are kept
+ * separate, so the Voice/Music levels can be re-balanced AFTER the take:
+ * playback mixes the two stems live, and export renders the mix to MP3 at the
+ * chosen levels. Nothing is baked in until you download.
  *
- * Only the backing track is sent to the speakers (not the mic), so with
- * headphones there's no echo/feedback in the recording.
+ * The visible <audio> player is never rerouted (we play decoded buffers), and
+ * the mic is not monitored on the speakers, so with headphones there's no echo.
  */
 
 let ctx: AudioContext | null = null;
@@ -37,18 +38,17 @@ export async function prepareTrack(url: string): Promise<AudioBuffer> {
   return buf;
 }
 
-export interface Take {
-  blob: Blob;
-  url: string;
+/** The recorded microphone stem (before mixing). */
+export interface VoiceStem {
+  pcm: Float32Array;
+  sampleRate: number;
   duration: number;
 }
 
 interface StartOpts {
-  startAt?: number;
   onTick?: (t: number) => void;
   onComplete?: () => void;
-  /** Initial mixer levels (0..1.5). */
-  micGain?: number;
+  /** Monitor level for the backing track during the take (0..1.5). */
   trackGain?: number;
 }
 
@@ -56,7 +56,6 @@ export class KaraokeRecorder {
   private mic?: MediaStream;
   private nodes: AudioNode[] = [];
   private trackSource?: AudioBufferSourceNode;
-  private micGainNode?: GainNode;
   private trackGainNode?: GainNode;
   private chunks: Float32Array[] = [];
   private length = 0;
@@ -65,12 +64,7 @@ export class KaraokeRecorder {
   private t0 = 0;
   recording = false;
 
-  /** Live-adjust the microphone (voice) level while recording or before it. */
-  setMicGain(v: number): void {
-    if (this.micGainNode) this.micGainNode.gain.value = v;
-  }
-
-  /** Live-adjust the backing-track level (affects both monitor + recording). */
+  /** Live-adjust the monitor level of the backing track during recording. */
   setTrackGain(v: number): void {
     if (this.trackGainNode) this.trackGainNode.gain.value = v;
   }
@@ -82,33 +76,19 @@ export class KaraokeRecorder {
     this.chunks = [];
     this.length = 0;
 
-    // microphone
     this.mic = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
     const micSource = c.createMediaStreamSource(this.mic);
 
-    // backing track (decoded buffer)
+    // backing track — monitored only (never captured)
     const trackSource = c.createBufferSource();
     trackSource.buffer = buffer;
-
-    // per-source level controls (the "mixer")
-    const micGainNode = c.createGain();
-    micGainNode.gain.value = opts.micGain ?? 1;
     const trackGainNode = c.createGain();
     trackGainNode.gain.value = opts.trackGain ?? 1;
-    this.micGainNode = micGainNode;
-    this.trackGainNode = trackGainNode;
+    trackSource.connect(trackGainNode).connect(c.destination);
 
-    // mix mic + track (post-gain) for capture
-    const mix = c.createGain();
-    micSource.connect(micGainNode).connect(mix);
-    trackSource.connect(trackGainNode).connect(mix);
-    // only the track is monitored on the speakers (avoids mic echo),
-    // at the same level it's recorded
-    trackGainNode.connect(c.destination);
-
-    // capture the mix as mono PCM
+    // capture the microphone alone as mono PCM
     const processor = c.createScriptProcessor(4096, 2, 1);
     processor.onaudioprocess = (e) => {
       if (!this.recording) return;
@@ -121,21 +101,21 @@ export class KaraokeRecorder {
       }
       this.chunks.push(mono);
       this.length += mono.length;
-      e.outputBuffer.getChannelData(0).fill(0); // stay silent on this branch
+      e.outputBuffer.getChannelData(0).fill(0);
     };
-    mix.connect(processor);
+    micSource.connect(processor);
     const silent = c.createGain();
     silent.gain.value = 0;
     processor.connect(silent);
     silent.connect(c.destination);
 
     this.trackSource = trackSource;
-    this.nodes = [micSource, micGainNode, trackGainNode, mix, processor, silent];
+    this.trackGainNode = trackGainNode;
+    this.nodes = [micSource, trackGainNode, processor, silent];
 
-    const startAt = Math.max(0, opts.startAt ?? 0);
-    this.t0 = c.currentTime - startAt;
+    this.t0 = c.currentTime;
     this.recording = true;
-    trackSource.start(0, startAt);
+    trackSource.start(0, 0);
 
     const tick = () => {
       if (!this.recording) return;
@@ -150,7 +130,7 @@ export class KaraokeRecorder {
     this.raf = requestAnimationFrame(tick);
   }
 
-  async stop(): Promise<Take> {
+  stop(): VoiceStem {
     this.recording = false;
     cancelAnimationFrame(this.raf);
     try {
@@ -180,9 +160,141 @@ export class KaraokeRecorder {
       off += b.length;
     }
     this.chunks = [];
-    const blob = await encodeMp3(pcm, this.sampleRate);
-    return { blob, url: URL.createObjectURL(blob), duration: this.length / this.sampleRate };
+    return { pcm, sampleRate: this.sampleRate, duration: this.length / this.sampleRate };
   }
+}
+
+/**
+ * Live stem playback: plays the voice stem + backing track through independent
+ * gain nodes so the Voice/Music faders re-balance in real time. The take runs
+ * for the length of the recorded voice.
+ */
+export class StemPlayer {
+  private c: AudioContext;
+  private voiceBuf: AudioBuffer;
+  private trackBuf: AudioBuffer;
+  private voiceGain: GainNode;
+  private trackGain: GainNode;
+  private vSrc?: AudioBufferSourceNode;
+  private tSrc?: AudioBufferSourceNode;
+  private startedAt = 0;
+  private offset = 0;
+  private raf = 0;
+  playing = false;
+  readonly duration: number;
+  onTick?: (t: number) => void;
+  onEnded?: () => void;
+
+  constructor(voice: VoiceStem, track: AudioBuffer, voiceGain: number, trackGain: number) {
+    this.c = getCtx();
+    this.voiceBuf = this.c.createBuffer(1, voice.pcm.length, voice.sampleRate);
+    this.voiceBuf.getChannelData(0).set(voice.pcm);
+    this.trackBuf = track;
+    this.voiceGain = this.c.createGain();
+    this.voiceGain.gain.value = voiceGain;
+    this.trackGain = this.c.createGain();
+    this.trackGain.gain.value = trackGain;
+    this.voiceGain.connect(this.c.destination);
+    this.trackGain.connect(this.c.destination);
+    this.duration = voice.duration;
+  }
+
+  setVoiceGain(v: number): void {
+    this.voiceGain.gain.value = v;
+  }
+  setTrackGain(v: number): void {
+    this.trackGain.gain.value = v;
+  }
+
+  async play(): Promise<void> {
+    if (this.playing) return;
+    await this.c.resume();
+    if (this.offset >= this.duration - 0.01) this.offset = 0;
+
+    this.vSrc = this.c.createBufferSource();
+    this.vSrc.buffer = this.voiceBuf;
+    this.vSrc.connect(this.voiceGain);
+    this.tSrc = this.c.createBufferSource();
+    this.tSrc.buffer = this.trackBuf;
+    this.tSrc.connect(this.trackGain);
+
+    this.startedAt = this.c.currentTime;
+    this.vSrc.start(0, Math.min(this.offset, this.voiceBuf.duration));
+    if (this.offset < this.trackBuf.duration) this.tSrc.start(0, this.offset);
+    this.playing = true;
+
+    const tick = () => {
+      if (!this.playing) return;
+      const t = this.offset + (this.c.currentTime - this.startedAt);
+      if (t >= this.duration) {
+        this.stopSources();
+        this.playing = false;
+        this.offset = 0;
+        this.onTick?.(this.duration);
+        this.onEnded?.();
+        return;
+      }
+      this.onTick?.(t);
+      this.raf = requestAnimationFrame(tick);
+    };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  pause(): void {
+    if (!this.playing) return;
+    this.offset += this.c.currentTime - this.startedAt;
+    this.playing = false;
+    cancelAnimationFrame(this.raf);
+    this.stopSources();
+  }
+
+  seek(t: number): void {
+    const wasPlaying = this.playing;
+    if (wasPlaying) this.pause();
+    this.offset = Math.max(0, Math.min(t, this.duration));
+    this.onTick?.(this.offset);
+    if (wasPlaying) void this.play();
+  }
+
+  private stopSources(): void {
+    try {
+      this.vSrc?.stop();
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.tSrc?.stop();
+    } catch {
+      /* ignore */
+    }
+    this.vSrc?.disconnect();
+    this.tSrc?.disconnect();
+  }
+
+  dispose(): void {
+    this.pause();
+    this.voiceGain.disconnect();
+    this.trackGain.disconnect();
+  }
+}
+
+/** Render voice + track at the given levels to a mixed-down MP3 blob. */
+export async function renderMixToMp3(
+  voice: VoiceStem,
+  track: AudioBuffer,
+  micGain: number,
+  trackGain: number
+): Promise<Blob> {
+  const n = voice.pcm.length;
+  const tL = track.getChannelData(0);
+  const tR = track.numberOfChannels > 1 ? track.getChannelData(1) : tL;
+  const mixed = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) {
+    const v = voice.pcm[i] * micGain;
+    const m = i < tL.length ? ((tL[i] + tR[i]) * 0.5) * trackGain : 0;
+    mixed[i] = Math.max(-1, Math.min(1, v + m));
+  }
+  return encodeMp3(mixed, voice.sampleRate);
 }
 
 async function encodeMp3(pcm: Float32Array, sampleRate: number): Promise<Blob> {
@@ -197,12 +309,9 @@ async function encodeMp3(pcm: Float32Array, sampleRate: number): Promise<Blob> {
   for (let i = 0; i < int16.length; i += block) {
     const buf = enc.encodeBuffer(int16.subarray(i, i + block));
     if (buf.length > 0) out.push(new Uint8Array(buf));
-    // yield periodically so the UI stays responsive on long takes
     if (i % (block * 250) === 0) await new Promise((r) => setTimeout(r, 0));
   }
   const end = enc.flush();
   if (end.length > 0) out.push(new Uint8Array(end));
-  // Uint8Array chunks are valid BlobParts at runtime; cast past the
-  // stricter ArrayBufferLike vs ArrayBuffer generic in recent TS lib types.
   return new Blob(out as unknown as BlobPart[], { type: "audio/mpeg" });
 }
