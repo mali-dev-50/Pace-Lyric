@@ -23,6 +23,7 @@ import {
   normalizeProject,
   putProject,
   renameProject,
+  seedDemoIfEmpty,
 } from "@/lib/projects";
 import type { ProjectSummary } from "@/lib/types";
 import { Button } from "./ui/Button";
@@ -50,6 +51,7 @@ export function Dashboard() {
   useEffect(() => {
     (async () => {
       await migrateLegacy();
+      await seedDemoIfEmpty();
       refresh();
       setMounted(true);
     })();

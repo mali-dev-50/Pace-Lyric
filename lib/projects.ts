@@ -7,6 +7,7 @@ import {
   loadLegacyAudioBlob,
   saveAudioBlob,
 } from "./storage";
+import { buildSeedProject, SEED_AUDIO_URL, SEED_SEEDED_FLAG } from "./seed";
 
 /**
  * Project registry. Full projects live at `pace-lyric:project:{id}`; a
@@ -126,6 +127,30 @@ export async function duplicateProject(id: string): Promise<KaraokeProject | nul
   putProject(copy);
   await copyAudioBlob(id, copy.id);
   return copy;
+}
+
+/**
+ * Seed a bundled sample project on first visit — but only when the user has
+ * no projects yet and we've never seeded before. The one-time flag means a
+ * user who deletes the demo won't see it return, and we never overwrite real
+ * work. Returns true if the demo was created.
+ */
+export async function seedDemoIfEmpty(): Promise<boolean> {
+  const store = ls();
+  if (!store) return false;
+  if (store.getItem(SEED_SEEDED_FLAG)) return false;
+  store.setItem(SEED_SEEDED_FLAG, "1");
+  if (listProjects().length > 0) return false;
+
+  const project = buildSeedProject();
+  putProject(project);
+  try {
+    const res = await fetch(SEED_AUDIO_URL);
+    if (res.ok) await saveAudioBlob(project.id, await res.blob());
+  } catch {
+    /* offline on first load — project still opens, audio can be re-imported */
+  }
+  return true;
 }
 
 /**
