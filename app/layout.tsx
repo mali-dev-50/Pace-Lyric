@@ -1,8 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/components/auth/AuthProvider";
 
-const sans = Inter({
+const sans = Outfit({
   subsets: ["latin"],
   variable: "--font-geist-sans",
   display: "swap",
@@ -15,13 +16,13 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Pace Lyric — Karaoke Timing Studio",
+  title: "SilverStone Studio",
   description:
-    "A professional web studio for building precisely synchronized karaoke lyrics from your own MP3s.",
+    "SilverStone Studio — the central studio dashboard for managing music production, tools, and projects.",
 };
 
 export const viewport: Viewport = {
-  themeColor: "#06090f",
+  themeColor: "#161616",
   width: "device-width",
   initialScale: 1,
 };
@@ -30,8 +31,10 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body>{children}</body>
+    <html lang="en" className={`dark ${sans.variable} ${mono.variable}`}>
+      <body>
+        <AuthProvider>{children}</AuthProvider>
+      </body>
     </html>
   );
 }

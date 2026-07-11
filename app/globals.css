@@ -1,39 +1,18 @@
 @import "tailwindcss";
 
 /* ============================================================
-   Design Tokens — Pace Lyric
-   Dark theme, sky-blue accent. All spacing on a 4px grid
-   (Tailwind's default 0.25rem step). No hardcoded values in
-   components — everything references these tokens.
+   BRAND KIT — single source of truth for color.
+   theme.css is copied verbatim from the OX Brand Code. To
+   re-skin the entire tool, replace app/theme.css with another
+   brand's export and every color below re-maps automatically.
+   Do NOT hardcode colors in components or here — map to the
+   brand tokens only.
    ============================================================ */
+@import "./theme.css";
+
+/* Structural tokens (not brand color) — spacing radii, shadows,
+   fonts, motion. These stay constant across brand swaps. */
 @theme {
-  /* Surfaces — layered dark neutrals (cool, slightly blue-tinted) */
-  --color-bg: #06090f;
-  --color-surface: #0b111b;
-  --color-surface-2: #111a28;
-  --color-surface-3: #17233520;
-  --color-elevated: #16202e;
-
-  /* Borders / hairlines */
-  --color-line: #1e2a3a;
-  --color-line-strong: #2a3a4f;
-
-  /* Text */
-  --color-ink: #eef4fb;
-  --color-ink-muted: #9fb2c9;
-  --color-ink-subtle: #62748c;
-
-  /* Accent — sky blue */
-  --color-accent: #38bdf8;
-  --color-accent-strong: #0ea5e9;
-  --color-accent-soft: #0b4a6b;
-  --color-accent-ink: #041016;
-
-  /* Semantic */
-  --color-positive: #34d399;
-  --color-warn: #fbbf24;
-  --color-danger: #fb7185;
-
   /* Radii */
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
@@ -44,7 +23,8 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 24px -8px rgba(0, 0, 0, 0.6);
-  --shadow-glow: 0 0 0 1px rgba(56, 189, 248, 0.25), 0 8px 28px -8px rgba(56, 189, 248, 0.35);
+  --shadow-glow: 0 0 0 1px color-mix(in srgb, var(--primary-solid) 30%, transparent),
+    0 8px 28px -8px color-mix(in srgb, var(--primary-solid) 40%, transparent);
 
   /* Fonts */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system,
@@ -54,6 +34,40 @@
 
   /* Motion */
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ============================================================
+   Semantic app tokens → OX brand tokens. Components reference
+   only these --color-* names, so swapping the brand kit above
+   restyles everything. Values resolve per active theme (.dark).
+   ============================================================ */
+:root {
+  /* Surfaces — layered neutrals from the CANVAS scale */
+  --color-bg: var(--canvas-base);
+  --color-surface: var(--canvas-bg-subtle);
+  --color-surface-2: var(--canvas-bg);
+  --color-surface-3: var(--canvas-bg-hover);
+  --color-elevated: var(--canvas-bg-active);
+
+  /* Borders / hairlines */
+  --color-line: var(--canvas-line);
+  --color-line-strong: var(--canvas-border);
+
+  /* Text */
+  --color-ink: var(--canvas-text-contrast);
+  --color-ink-muted: var(--canvas-text);
+  --color-ink-subtle: var(--canvas-solid);
+
+  /* Accent — the PRIMARY brand color */
+  --color-accent: var(--primary-solid);
+  --color-accent-strong: var(--primary-solid-hover);
+  --color-accent-soft: var(--primary-bg-active);
+  --color-accent-ink: var(--primary-on-primary);
+
+  /* Semantic states */
+  --color-positive: var(--success-text);
+  --color-warn: var(--warning-text);
+  --color-danger: var(--alert-text);
 }
 
 /* ---- Base ---- */
@@ -77,8 +91,8 @@ body::before {
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(14, 165, 233, 0.1), transparent 60%),
-    radial-gradient(900px 500px at 0% 0%, rgba(56, 189, 248, 0.06), transparent 55%);
+    radial-gradient(1200px 600px at 80% -10%, color-mix(in srgb, var(--primary-solid) 12%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 0% 0%, color-mix(in srgb, var(--primary-solid) 7%, transparent), transparent 55%);
   pointer-events: none;
 }
 

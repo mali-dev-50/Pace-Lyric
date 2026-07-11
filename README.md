@@ -1,8 +1,14 @@
-# Pace Lyric — Karaoke Timing Studio
+# SilverStone Studio
 
-A professional, web-based studio for building precisely synchronized karaoke lyrics from your own MP3s. Manage multiple projects from a dashboard, time lyrics on a draggable timeline, fine-tune every line in a dedicated inspector, preview with studio-grade animations, and export a standard `.lrc` file.
+The central studio dashboard for SilverStone Studio — a web app where all music-production work is managed in one place. Tools live inside the dashboard; the first is **Pace Lyrics**.
 
-Built with **Next.js 15 (App Router)**, **TypeScript**, **Tailwind CSS v4**, **Zustand**, and **Framer Motion**. Deploys cleanly to **Vercel** with zero backend — everything runs in the browser.
+Built with **Next.js 15 (App Router)**, **TypeScript**, **Tailwind CSS v4**, **Zustand**, and **Framer Motion**, with **Supabase** for cloud sync (accounts, shared projects, audio storage). Deploys on **Vercel**.
+
+## Tools
+
+### Pace Lyrics — Karaoke Timing Studio
+
+A professional studio for building precisely synchronized karaoke lyrics from your own MP3s. Manage multiple projects, time lyrics on a draggable timeline, fine-tune every line in a dedicated inspector, preview with studio-grade animations, record vocal takes over the backing track, and export a standard `.lrc` file or a mixed MP3.
 
 ## Features
 

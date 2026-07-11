@@ -31,6 +31,7 @@ import {
   type VoiceStem,
 } from "@/lib/recorder";
 import { loadTakeBlob, saveTakeBlob } from "@/lib/storage";
+import { hydrateTakeAudio, uploadTakeAudio } from "@/lib/cloud";
 import { uid } from "@/lib/model";
 import { clamp, formatTimecode } from "@/lib/time";
 import type { RecordedTake } from "@/lib/types";
@@ -47,7 +48,9 @@ const sanitize = (s: string) => s.replace(/[^\w\-]+/g, "_").replace(/^_+|_+$/g, 
 export function RecordStudio() {
   const audioUrl = useStore((s) => s.audioUrl);
   const projectName = useStore((s) => s.project?.name ?? "take");
+  const projectId = useStore((s) => s.project?.id ?? null);
   const takes = useStore((s) => s.project?.takes ?? []);
+  const pushToCloud = useStore((s) => s.pushToCloud);
   const pause = useStore((s) => s.pause);
   const seek = useStore((s) => s.seek);
   const setCurrentTime = useStore((s) => s.setCurrentTime);
@@ -209,7 +212,9 @@ export function RecordStudio() {
           if (!audioUrl) throw new Error("Import the backing track first.");
           trackBufferRef.current = await prepareTrack(audioUrl);
         }
-        const blob = await loadTakeBlob(t.id);
+        const blob =
+          (await loadTakeBlob(t.id)) ??
+          (projectId ? await hydrateTakeAudio(projectId, t.id) : null);
         if (!blob) throw new Error("This take's audio couldn't be found.");
         const stem = await decodeVoiceStem(blob);
         setMicGainState(t.micGain);
@@ -225,7 +230,7 @@ export function RecordStudio() {
         setBusyTakeId(null);
       }
     },
-    [audioUrl, pause, attachPlayer, busyTakeId]
+    [audioUrl, pause, attachPlayer, busyTakeId, projectId]
   );
 
   const togglePlay = () => {
@@ -311,7 +316,8 @@ export function RecordStudio() {
     const name = saveName.trim() || `Take ${takes.length + 1}`;
     setSaving(true);
     try {
-      await saveTakeBlob(id, voiceStemToWav(take));
+      const wav = voiceStemToWav(take);
+      await saveTakeBlob(id, wav);
       addTake({
         id,
         name,
@@ -323,6 +329,11 @@ export function RecordStudio() {
       });
       setActiveTakeId(id);
       setSaveOpen(false);
+      // Sync to the cloud so a collaborator can hear this take too.
+      if (projectId) {
+        void uploadTakeAudio(projectId, id, wav);
+        void pushToCloud();
+      }
     } catch (err) {
       console.error("[recorder] save take failed:", err);
       setError("Couldn't save the take. Your browser storage may be full.");

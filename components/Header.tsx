@@ -12,21 +12,26 @@ import {
   FileDown,
   FileUp,
   MoreHorizontal,
+  Loader2,
   MoveHorizontal,
   Music,
   Pencil,
   Save,
   Settings,
+  TriangleAlert,
+  UserPlus,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { extractPeaks } from "@/lib/waveform";
 import { normalizeProject, putProject } from "@/lib/projects";
+import { useAuth } from "./auth/AuthProvider";
 import { Button } from "./ui/Button";
 import { Menu } from "./ui/Menu";
 import { Modal } from "./ui/Modal";
 import { cn } from "@/lib/cn";
 import { ShiftTimingDialog } from "./editor/ShiftTimingDialog";
 import { SettingsDialog } from "./editor/SettingsDialog";
+import { ShareDialog } from "./editor/ShareDialog";
 
 export function Header() {
   const router = useRouter();
@@ -44,21 +49,32 @@ export function Header() {
   const attachAudio = useStore((s) => s.attachAudio);
   const setPeaks = useStore((s) => s.setPeaks);
   const clearAllTiming = useStore((s) => s.clearAllTiming);
+  const pushToCloud = useStore((s) => s.pushToCloud);
+  const projectId = useStore((s) => s.project?.id ?? "");
+  const { cloudEnabled } = useAuth();
 
   const importRef = useRef<HTMLInputElement | null>(null);
   const audioRef = useRef<HTMLInputElement | null>(null);
   const [shiftOpen, setShiftOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [saveAsName, setSaveAsName] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
-  const [justSaved, setJustSaved] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
-  const doSave = () => {
+  const doSave = async () => {
     persistProject();
-    setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 1600);
+    if (!cloudEnabled) {
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 1600);
+      return;
+    }
+    setSaveState("saving");
+    const res = await pushToCloud();
+    setSaveState(res.ok ? "saved" : "error");
+    setTimeout(() => setSaveState("idle"), res.ok ? 1600 : 3200);
   };
 
   return (
@@ -66,8 +82,8 @@ export function Header() {
       {/* left: back + project name */}
       <div className="flex min-w-0 items-center gap-2">
         <Link
-          href="/"
-          title="Back to dashboard"
+          href="/tools/pace-lyrics"
+          title="Back to Pace Lyrics"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-ink-muted)] transition-colors hover:bg-[var(--color-surface-2)] hover:text-[var(--color-ink)]"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -132,10 +148,28 @@ export function Header() {
           <Music className="h-3.5 w-3.5 shrink-0" />
           {audioFileName ?? "No audio"}
         </span>
-        <Button variant="secondary" size="sm" onClick={doSave} className="min-w-[84px]">
-          {justSaved ? (
+        {cloudEnabled && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShareOpen(true)}
+            title="Share with a collaborator"
+          >
+            <UserPlus className="h-4 w-4" /> Share
+          </Button>
+        )}
+        <Button variant="secondary" size="sm" onClick={doSave} className="min-w-[92px]" disabled={saveState === "saving"}>
+          {saveState === "saving" ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" /> Saving
+            </>
+          ) : saveState === "saved" ? (
             <>
               <Check className="h-4 w-4 text-[var(--color-positive)]" /> Saved
+            </>
+          ) : saveState === "error" ? (
+            <>
+              <TriangleAlert className="h-4 w-4 text-[var(--color-danger)]" /> Retry
             </>
           ) : (
             <>
@@ -213,7 +247,7 @@ export function Header() {
           if (!file) return;
           const project = normalizeProject(JSON.parse(await file.text()), file.name.replace(/\.[^.]+$/, ""));
           if (!project) {
-            alert("That file isn't a valid Pace Lyric project.");
+            alert("That file isn't a valid Pace Lyrics project.");
             return;
           }
           putProject(project);
@@ -240,6 +274,9 @@ export function Header() {
 
       <ShiftTimingDialog open={shiftOpen} onClose={() => setShiftOpen(false)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      {cloudEnabled && (
+        <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} projectId={projectId} />
+      )}
 
       <Modal
         open={saveAsOpen}

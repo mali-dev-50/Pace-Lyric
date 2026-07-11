@@ -13,19 +13,27 @@ import {
   Plus,
   Search,
   Trash2,
+  Users,
 } from "lucide-react";
 import {
   createProject,
   deleteProject,
   duplicateProject,
+  getProject,
   listProjects,
   migrateLegacy,
   normalizeProject,
   putProject,
   renameProject,
-  seedDemoIfEmpty,
 } from "@/lib/projects";
+import {
+  deleteCloudProject,
+  listCloudProjects,
+  pushProjectWithAssets,
+  saveCloudProject,
+} from "@/lib/cloud";
 import type { ProjectSummary } from "@/lib/types";
+import { useAuth } from "./auth/AuthProvider";
 import { Button } from "./ui/Button";
 import { Menu } from "./ui/Menu";
 import { Modal } from "./ui/Modal";
@@ -34,9 +42,17 @@ import { formatShort } from "@/lib/time";
 
 type SortKey = "recent" | "name" | "created";
 
+/** Extra per-project info that only exists in cloud mode. */
+interface CloudMeta {
+  sharedWithMe: boolean;
+  updatedByEmail: string | null;
+}
+
 export function Dashboard() {
   const router = useRouter();
+  const { cloudEnabled } = useAuth();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [meta, setMeta] = useState<Record<string, CloudMeta>>({});
   const [mounted, setMounted] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("recent");
@@ -46,16 +62,30 @@ export function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const importRef = useRef<HTMLInputElement | null>(null);
 
-  const refresh = () => setProjects(listProjects());
+  const refresh = async () => {
+    if (cloudEnabled) {
+      const cloud = await listCloudProjects();
+      // Mirror each cloud project into the local cache so the editor can open it.
+      cloud.forEach((c) => putProject(c.project));
+      setProjects(cloud.map((c) => c.summary));
+      setMeta(
+        Object.fromEntries(
+          cloud.map((c) => [c.summary.id, { sharedWithMe: c.sharedWithMe, updatedByEmail: c.updatedByEmail }])
+        )
+      );
+    } else {
+      setProjects(listProjects());
+    }
+  };
 
   useEffect(() => {
     (async () => {
       await migrateLegacy();
-      await seedDemoIfEmpty();
-      refresh();
+      await refresh();
       setMounted(true);
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloudEnabled]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -76,8 +106,9 @@ export function Dashboard() {
 
   const open = (id: string) => router.push(`/editor/${id}`);
 
-  const handleCreate = (name: string) => {
+  const handleCreate = async (name: string) => {
     const project = createProject(name);
+    if (cloudEnabled) await saveCloudProject(project);
     open(project.id);
   };
 
@@ -85,19 +116,20 @@ export function Dashboard() {
     try {
       const project = normalizeProject(JSON.parse(await file.text()), file.name.replace(/\.[^.]+$/, ""));
       if (!project) {
-        alert("That file isn't a valid Pace Lyric project.");
+        alert("That file isn't a valid Pace Lyrics project.");
         return;
       }
       putProject(project);
-      refresh();
+      if (cloudEnabled) await saveCloudProject(project);
+      await refresh();
     } catch {
       alert("Could not read that project file.");
     }
   };
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-6xl px-6 py-10">
-      {/* header */}
+    <div className="mx-auto min-h-dvh w-full max-w-6xl px-8 py-10">
+      {/* tool header */}
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-surface-2)] ring-1 ring-[var(--color-line)]">
@@ -105,9 +137,9 @@ export function Dashboard() {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-[var(--color-ink)]">
-              Pace Lyric
+              Pace Lyrics
             </h1>
-            <p className="text-sm text-[var(--color-ink-subtle)]">Karaoke Timing Studio</p>
+            <p className="text-sm text-[var(--color-ink-subtle)]">Karaoke timing studio</p>
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -169,9 +201,12 @@ export function Dashboard() {
                   onOpen={() => open(p.id)}
                   onRename={() => setRenameTarget(p)}
                   onDuplicate={async () => {
-                    await duplicateProject(p.id);
-                    refresh();
+                    const copy = await duplicateProject(p.id);
+                    if (copy && cloudEnabled) await pushProjectWithAssets(copy);
+                    await refresh();
                   }}
+                  shared={meta[p.id]?.sharedWithMe ?? false}
+                  updatedByEmail={meta[p.id]?.updatedByEmail ?? null}
                   onDelete={() => setDeleteTarget(p)}
                 />
               ))}
@@ -211,10 +246,16 @@ export function Dashboard() {
         confirmLabel="Save name"
         initial={renameTarget?.name ?? ""}
         onClose={() => setRenameTarget(null)}
-        onConfirm={(name) => {
-          if (renameTarget) renameProject(renameTarget.id, name);
+        onConfirm={async (name) => {
+          if (renameTarget) {
+            renameProject(renameTarget.id, name);
+            if (cloudEnabled) {
+              const p = getProject(renameTarget.id);
+              if (p) await saveCloudProject(p);
+            }
+          }
           setRenameTarget(null);
-          refresh();
+          await refresh();
         }}
       />
 
@@ -231,9 +272,12 @@ export function Dashboard() {
             <Button
               variant="danger"
               onClick={async () => {
-                if (deleteTarget) await deleteProject(deleteTarget.id);
+                if (deleteTarget) {
+                  await deleteProject(deleteTarget.id);
+                  if (cloudEnabled) await deleteCloudProject(deleteTarget.id);
+                }
                 setDeleteTarget(null);
-                refresh();
+                await refresh();
               }}
             >
               Delete permanently
@@ -253,12 +297,16 @@ function ProjectCard({
   onRename,
   onDuplicate,
   onDelete,
+  shared = false,
+  updatedByEmail = null,
 }: {
   project: ProjectSummary;
   onOpen: () => void;
   onRename: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  shared?: boolean;
+  updatedByEmail?: string | null;
 }) {
   const pct = project.lineCount ? (project.timedLineCount / project.lineCount) * 100 : 0;
   return (
@@ -274,6 +322,11 @@ function ProjectCard({
         {/* banner */}
         <div className="relative flex h-24 items-center justify-center overflow-hidden bg-gradient-to-br from-[var(--color-surface-2)] to-[var(--color-elevated)]">
           <div className="absolute inset-0 bg-[radial-gradient(400px_120px_at_30%_0%,rgba(56,189,248,0.18),transparent_70%)]" />
+          {shared && (
+            <span className="absolute left-3 top-2 flex items-center gap-1 rounded-[var(--radius-xs)] bg-[color-mix(in_srgb,var(--color-accent)_18%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-accent)]">
+              <Users className="h-3 w-3" /> Shared
+            </span>
+          )}
           <AudioLines className="h-8 w-8 text-[var(--color-accent)] opacity-80" strokeWidth={1.5} />
           {project.audioDuration != null && (
             <span className="absolute bottom-2 right-3 font-mono text-[11px] tabular-nums text-[var(--color-ink-subtle)]">
@@ -304,6 +357,11 @@ function ProjectCard({
                 {relativeDate(project.updatedAt)}
               </span>
             </div>
+            {updatedByEmail && (
+              <p className="mb-1 truncate text-[10px] text-[var(--color-ink-subtle)]">
+                Last edited by {updatedByEmail}
+              </p>
+            )}
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]">
               <div
                 className="h-full rounded-full bg-[var(--color-accent)]"

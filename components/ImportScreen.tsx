@@ -36,10 +36,10 @@ export function ImportScreen() {
     <div className="relative flex min-h-dvh flex-col">
       <div className="flex items-center justify-between px-4 py-3">
         <Link
-          href="/"
+          href="/tools/pace-lyrics"
           className="inline-flex items-center gap-1.5 text-sm text-[var(--color-ink-muted)] transition-colors hover:text-[var(--color-ink)]"
         >
-          <ArrowLeft className="h-4 w-4" /> Dashboard
+          <ArrowLeft className="h-4 w-4" /> Pace Lyrics
         </Link>
         <span className="truncate text-sm font-medium text-[var(--color-ink)]">{projectName}</span>
         <span className="w-20" />

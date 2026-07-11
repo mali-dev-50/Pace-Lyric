@@ -15,6 +15,13 @@ import {
 } from "./model";
 import { duplicateProject, getProject, putProject, renameProject } from "./projects";
 import { deleteTakeBlob, loadAudioBlob, saveAudioBlob } from "./storage";
+import {
+  deleteTakeAudio,
+  hydrateSourceAudio,
+  saveCloudProject,
+  uploadSourceAudio,
+  type SaveResult,
+} from "./cloud";
 import { clamp } from "./time";
 import type {
   Flag,
@@ -105,6 +112,9 @@ interface StoreState {
   addTake: (take: RecordedTake) => void;
   renameTake: (id: string, name: string) => void;
   deleteTake: (id: string) => void;
+
+  /** Push the current project (metadata + JSON) to the cloud, if configured. */
+  pushToCloud: () => Promise<SaveResult>;
 
   /** Persist the current in-memory project (call after a live drag ends). */
   persistProject: () => void;
@@ -214,7 +224,9 @@ export const useStore = create<StoreState>((set, get) => ({
     }));
 
     if (project.audioFileName) {
-      const blob = await loadAudioBlob(id);
+      // Prefer the local cache; fall back to the cloud (a collaborator's first
+      // open, or a fresh browser) and re-cache it.
+      const blob = (await loadAudioBlob(id)) ?? (await hydrateSourceAudio(id));
       if (blob && get().project?.id === id) {
         const url = URL.createObjectURL(blob);
         set(() => ({ audioUrl: url, hasAudio: true }));
@@ -286,7 +298,10 @@ export const useStore = create<StoreState>((set, get) => ({
     const url = URL.createObjectURL(blob);
     set(() => ({ audioUrl: url, hasAudio: true }));
     commit(set, get, (d) => void (d.audioFileName = fileName));
-    if (persist) await saveAudioBlob(id, blob);
+    if (persist) {
+      await saveAudioBlob(id, blob);
+      void uploadSourceAudio(id, blob);
+    }
   },
 
   setPeaks: (peaks) => set(() => ({ peaks, audioLoading: false })),
@@ -476,10 +491,18 @@ export const useStore = create<StoreState>((set, get) => ({
     }),
 
   deleteTake: (id) => {
+    const projectId = get().project?.id;
     commit(set, get, (d) => {
       d.takes = (d.takes ?? []).filter((t) => t.id !== id);
     });
     void deleteTakeBlob(id);
+    if (projectId) void deleteTakeAudio(projectId, id);
+  },
+
+  pushToCloud: async () => {
+    const p = get().project;
+    if (!p) return { ok: true };
+    return saveCloudProject(p);
   },
 
   persistProject: () => {

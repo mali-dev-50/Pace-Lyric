@@ -1,5 +1,5 @@
 {
-  "name": "pace-lyric",
+  "name": "silverstone-studio-dashboard",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
+    "@supabase/supabase-js": "^2.110.2",
     "clsx": "^2.1.1",
     "framer-motion": "^11.15.0",
     "idb-keyval": "^6.2.1",
