@@ -42,6 +42,7 @@ export function buildSeedProject(): KaraokeProject {
     audioDuration: SEED_DURATION,
     lines,
     flags: [],
+    takes: [],
     settings: { ...DEFAULT_SETTINGS },
     createdAt: now,
     updatedAt: now,

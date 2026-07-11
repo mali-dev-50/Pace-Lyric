@@ -3,7 +3,9 @@ import { emptyProject, toSummary, uid } from "./model";
 import {
   clearLegacyAudioBlob,
   copyAudioBlob,
+  copyTakeBlob,
   deleteAudioBlob,
+  deleteTakeBlob,
   loadLegacyAudioBlob,
   saveAudioBlob,
 } from "./storage";
@@ -39,6 +41,7 @@ export function normalizeProject(raw: unknown, fallbackName = "Imported Project"
     audioDuration: p.audioDuration ?? null,
     lines: p.lines,
     flags: Array.isArray(p.flags) ? p.flags : [],
+    takes: Array.isArray(p.takes) ? p.takes : [],
     settings: { ...DEFAULT_SETTINGS, ...(p.settings ?? {}) },
     createdAt: p.createdAt ?? now,
     updatedAt: p.updatedAt ?? now,
@@ -108,24 +111,31 @@ export function renameProject(id: string, name: string): void {
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  const project = getProject(id);
   ls()?.removeItem(projectKey(id));
   writeIndex(listProjects().filter((s) => s.id !== id));
   await deleteAudioBlob(id);
+  await Promise.all((project?.takes ?? []).map((t) => deleteTakeBlob(t.id)));
 }
 
 export async function duplicateProject(id: string): Promise<KaraokeProject | null> {
   const source = getProject(id);
   if (!source) return null;
   const now = Date.now();
+  // Re-key each take so the duplicate owns its own take blobs; deleting one
+  // project's take must never affect the other's.
+  const takeIdMap = (source.takes ?? []).map((t) => ({ from: t.id, to: uid("take") }));
   const copy: KaraokeProject = {
     ...structuredClone(source),
     id: uid("proj"),
     name: `${source.name} copy`,
+    takes: (source.takes ?? []).map((t, i) => ({ ...t, id: takeIdMap[i].to })),
     createdAt: now,
     updatedAt: now,
   };
   putProject(copy);
   await copyAudioBlob(id, copy.id);
+  await Promise.all(takeIdMap.map(({ from, to }) => copyTakeBlob(from, to)));
   return copy;
 }
 

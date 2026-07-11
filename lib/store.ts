@@ -14,9 +14,17 @@ import {
   uid,
 } from "./model";
 import { duplicateProject, getProject, putProject, renameProject } from "./projects";
-import { loadAudioBlob, saveAudioBlob } from "./storage";
+import { deleteTakeBlob, loadAudioBlob, saveAudioBlob } from "./storage";
 import { clamp } from "./time";
-import type { Flag, KaraokeProject, Line, ProjectSettings, TimingLevel, Word } from "./types";
+import type {
+  Flag,
+  KaraokeProject,
+  Line,
+  ProjectSettings,
+  RecordedTake,
+  TimingLevel,
+  Word,
+} from "./types";
 import { extractPeaks } from "./waveform";
 
 type View = "editor" | "preview" | "record";
@@ -91,6 +99,12 @@ interface StoreState {
   updateFlagLabel: (id: string, label: string) => void;
   deleteFlag: (id: string) => void;
   selectFlag: (id: string | null) => void;
+
+  // ---- recorded takes ----
+  /** Register a saved take's metadata (its audio blob is stored separately). */
+  addTake: (take: RecordedTake) => void;
+  renameTake: (id: string, name: string) => void;
+  deleteTake: (id: string) => void;
 
   /** Persist the current in-memory project (call after a live drag ends). */
   persistProject: () => void;
@@ -449,6 +463,24 @@ export const useStore = create<StoreState>((set, get) => ({
       const flag = d.flags.find((f) => f.id === id);
       if (flag) flag.label = label;
     }),
+
+  addTake: (take) =>
+    commit(set, get, (d) => {
+      d.takes = [...(d.takes ?? []), take];
+    }),
+
+  renameTake: (id, name) =>
+    commit(set, get, (d) => {
+      const take = (d.takes ?? []).find((t) => t.id === id);
+      if (take) take.name = name.trim() || take.name;
+    }),
+
+  deleteTake: (id) => {
+    commit(set, get, (d) => {
+      d.takes = (d.takes ?? []).filter((t) => t.id !== id);
+    });
+    void deleteTakeBlob(id);
+  },
 
   persistProject: () => {
     const p = get().project;

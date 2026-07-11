@@ -28,6 +28,27 @@ export interface Flag {
   label: string;
 }
 
+/**
+ * A saved performance take. The recorded microphone (voice) stem is persisted
+ * as a WAV blob in IndexedDB (keyed by this id); the backing track stays the
+ * project's MP3, so a saved take can be re-mixed, played, and exported — as the
+ * clean voice alone or mixed with the music — long after it was recorded.
+ */
+export interface RecordedTake {
+  id: string;
+  /** User-facing name for the take (e.g. "Take 1", "Chorus try"). */
+  name: string;
+  createdAt: number;
+  /** Length of the recorded voice stem, in seconds. */
+  duration: number;
+  /** Sample rate of the stored voice stem. */
+  sampleRate: number;
+  /** Voice fader captured with the take (default for playback/export). */
+  micGain: number;
+  /** Music fader captured with the take (default for playback/export). */
+  trackGain: number;
+}
+
 /** Project-specific karaoke configuration. */
 export interface ProjectSettings {
   /** "Get ready" lead-in window (seconds) shown before a line in preview. */
@@ -54,6 +75,8 @@ export interface KaraokeProject {
   audioDuration: number | null;
   lines: Line[];
   flags: Flag[];
+  /** Saved recording takes (voice stems persisted separately in IndexedDB). */
+  takes: RecordedTake[];
   settings: ProjectSettings;
   createdAt: number;
   updatedAt: number;

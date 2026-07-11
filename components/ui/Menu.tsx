@@ -44,7 +44,14 @@ export function Menu({
   const place = useCallback(() => {
     const r = triggerRef.current?.getBoundingClientRect();
     if (!r) return;
-    const top = r.bottom + 8;
+    const gap = 8;
+    const panelH = panelRef.current?.offsetHeight ?? 0;
+    const spaceBelow = window.innerHeight - r.bottom;
+    const spaceAbove = r.top;
+    // Flip above the trigger when it would otherwise be clipped at the bottom
+    // (e.g. a menu opened from the bottom console) and there's more room above.
+    const flipUp = panelH > 0 && spaceBelow < panelH + gap && spaceAbove > spaceBelow;
+    const top = flipUp ? Math.max(gap, r.top - panelH - gap) : r.bottom + gap;
     if (align === "right") setCoords({ top, right: window.innerWidth - r.right });
     else setCoords({ top, left: r.left });
   }, [align]);

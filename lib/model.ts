@@ -166,6 +166,7 @@ export function emptyProject(name = "Untitled Project"): KaraokeProject {
     audioDuration: null,
     lines: [],
     flags: [],
+    takes: [],
     settings: { ...DEFAULT_SETTINGS },
     createdAt: now,
     updatedAt: now,

@@ -297,6 +297,62 @@ export async function renderMixToMp3(
   return encodeMp3(mixed, voice.sampleRate);
 }
 
+/** Render the isolated voice stem (no backing track) at the given level to MP3. */
+export async function renderVoiceToMp3(voice: VoiceStem, micGain: number): Promise<Blob> {
+  const out = new Float32Array(voice.pcm.length);
+  for (let i = 0; i < voice.pcm.length; i += 1) {
+    out[i] = Math.max(-1, Math.min(1, voice.pcm[i] * micGain));
+  }
+  return encodeMp3(out, voice.sampleRate);
+}
+
+/**
+ * Serialize a voice stem to a mono 16-bit PCM WAV blob for durable storage in
+ * IndexedDB. WAV (not MP3) keeps the stem lossless so it can be re-mixed and
+ * re-exported any number of times without generational quality loss.
+ */
+export function voiceStemToWav(voice: VoiceStem): Blob {
+  const { pcm, sampleRate } = voice;
+  const bytesPerSample = 2;
+  const dataSize = pcm.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeStr = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i += 1) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true); // fmt chunk size
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true); // byte rate
+  view.setUint16(32, bytesPerSample, true); // block align
+  view.setUint16(34, 16, true); // bits per sample
+  writeStr(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let off = 44;
+  for (let i = 0; i < pcm.length; i += 1, off += 2) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+/** Decode a stored WAV blob back into a voice stem for playback/export. */
+export async function decodeVoiceStem(blob: Blob): Promise<VoiceStem> {
+  const c = getCtx();
+  const arr = await blob.arrayBuffer();
+  const buf = await c.decodeAudioData(arr);
+  const pcm = new Float32Array(buf.getChannelData(0));
+  return { pcm, sampleRate: buf.sampleRate, duration: buf.duration };
+}
+
 async function encodeMp3(pcm: Float32Array, sampleRate: number): Promise<Blob> {
   const enc = new Mp3Encoder(1, sampleRate, 128);
   const int16 = new Int16Array(pcm.length);
