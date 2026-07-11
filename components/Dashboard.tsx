@@ -8,6 +8,7 @@ import {
   Clock,
   Copy,
   FileUp,
+  MoreVertical,
   Music,
   Pencil,
   Plus,
@@ -377,7 +378,7 @@ function ProjectCard({
         <Menu
           trigger={
             <span className="flex h-8 w-8 items-center justify-center rounded-[var(--radius-sm)] bg-[var(--color-bg)]/60 text-[var(--color-ink-muted)] opacity-0 backdrop-blur transition-opacity hover:text-[var(--color-ink)] group-hover:opacity-100">
-              <Pencil className="h-3.5 w-3.5" />
+              <MoreVertical className="h-4 w-4" />
             </span>
           }
           items={[
