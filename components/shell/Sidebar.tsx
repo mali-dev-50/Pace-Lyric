@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, LogOut, Mic2, Wrench, X } from "lucide-react";
+import { AudioLines, LayoutDashboard, LogOut, Wrench, X } from "lucide-react";
 import { useAuth } from "../auth/AuthProvider";
 import { Logo } from "../brand/Logo";
 import { cn } from "@/lib/cn";
@@ -24,7 +24,7 @@ const TOOLS: ToolLink[] = [
     href: "/tools/pace-lyrics",
     label: "Pace Lyrics",
     summary: "Sync lyrics to your track, preview karaoke, record takes, export .lrc.",
-    icon: <Mic2 className="h-4 w-4" />,
+    icon: <AudioLines className="h-4 w-4" />,
     match: (p) => p.startsWith("/tools/pace-lyrics") || p.startsWith("/editor"),
   },
 ];

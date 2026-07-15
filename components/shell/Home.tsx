@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Mic2 } from "lucide-react";
+import { ArrowRight, AudioLines } from "lucide-react";
 import { LogoMark } from "../brand/Logo";
 
 /**
@@ -35,7 +35,7 @@ export function Home() {
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <LaunchCard
             href="/tools/pace-lyrics"
-            icon={<Mic2 className="h-5 w-5" />}
+            icon={<AudioLines className="h-5 w-5" strokeWidth={1.75} />}
             title="Pace Lyrics"
             body="Sync lyrics to your track on a timeline, preview studio-grade karaoke, record vocal takes over the music, and export .lrc or a mixed MP3."
             cta="Open Pace Lyrics"
